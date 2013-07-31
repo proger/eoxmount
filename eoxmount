@@ -6,6 +6,7 @@ use Getopt::Long;
 use File::Which;
 use IO::Socket;
 use Fcntl;
+use POSIX;
 use bytes;
 
 my $top_sock;
@@ -13,11 +14,13 @@ my $top_sock;
 ####
 my $opt_verbose = 0;
 my $opt_user = "root";
+my $opt_fuse = 0;
 
 my $ok = GetOptions (
-						"verbose" => \$opt_verbose,
-					 	"user=s" => \$opt_user
-					);
+		"verbose" => \$opt_verbose,
+		"user=s" => \$opt_user,
+		"fuse" => \$opt_fuse
+);
 
 usage() unless $ok and $#ARGV == 1;
 
@@ -31,7 +34,7 @@ my $server_fdno;
 &parse_options;
 &check_prerequisites;
 &munge_authentication;
-&execute_mount;
+$opt_fuse ? &execute_mount_fuse : &execute_mount;
 
 print "mount $remote_aname from $server_host:$server_port at $mount_at\n";
 
@@ -101,14 +104,26 @@ sub execute_mount {
 			   "rfdno=$server_fdno," .
 			   "wfdno=$server_fdno";
 
-    my $command = "mount -t 9p -o $opts $server_host $mount_at";
+	my $command = "mount -t 9p -o $opts $server_host $mount_at";
 	print "eoxmount: exec: $command\n" if $opt_verbose;
 
 	exec($command) or die "eoxmount: cannot exec mount\n";
 }
 
+sub execute_mount_fuse {
+	#dup2($server_fdno, 0);
+
+	my $prefix = $opt_user ne "root" ? "sudo -u $opt_user " : "";
+	my $bin = $opt_verbose ? "env NOLIBTHREADDAEMONIZE=1 9pfuse -D" : "9pfuse";
+	my $command = "${prefix}$bin -a $remote_aname +$server_fdno $mount_at";
+
+	print "eoxmount: exec: $command\n" if $opt_verbose;
+
+	exec($command) or die "eoxmount: cannot exec 9pfuse\n";
+}
+
 sub usage {
-	die "Usage: eoxmount [-v] host[:port]:path directory\n";
+	die "Usage: eoxmount [-v] [--fuse] host[:port]:path directory\n";
 }
 
 sub roundtrip {
